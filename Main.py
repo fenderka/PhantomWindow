@@ -4,8 +4,9 @@ import psutil
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QComboBox,
                              QPushButton, QLabel, QLineEdit, QFormLayout,
                              QMessageBox, QGridLayout, QHBoxLayout, QScrollArea,
-                             QGroupBox, QSpinBox)
-from PyQt5.QtCore import Qt, QSize, QLocale, QSettings
+                             QGroupBox, QSpinBox, QSystemTrayIcon, QMenu, QAction,
+                             QProgressBar, QShortcut)
+from PyQt5.QtCore import Qt, QSize, QLocale, QSettings, QTimer
 from PyQt5.QtGui import QIcon, QPixmap, QPalette, QColor
 
 import win32gui
@@ -29,6 +30,7 @@ class OverlayApp(QWidget):
         self.process_list_combo = QComboBox()
         self.process_list_combo.setIconSize(QSize(32, 32))
         self.process_list_combo.setMaxVisibleItems(10)
+        self.process_list_combo.currentIndexChanged.connect(self.save_selected_process)
 
         # Use QSpinBox for integer inputs
         self.x_spin = QSpinBox()
@@ -54,14 +56,25 @@ class OverlayApp(QWidget):
         self.remove_overlay_button.clicked.connect(self.remove_overlay)
         self.remove_overlay_button.setEnabled(False)
 
+        # Toggle Theme Button
+        self.toggle_theme_button = QPushButton("Переключить тему", self)
+        self.toggle_theme_button.clicked.connect(self.toggle_theme)
+
+        # Progress Bar
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setRange(0, 0)  # Set to busy indicator mode
+        self.progress_bar.setVisible(False)
+
+
         self.hwnd = None
         self.target_pid = None
+        self.dark_theme = False
 
         # Layout
         main_layout = QVBoxLayout()
 
         # Process selection group
-        self.process_group = QGroupBox("Выбор процесса")  # Make it an instance variable
+        self.process_group = QGroupBox("Выбор процесса")
         process_group_layout = QVBoxLayout()
         process_group_layout.addWidget(QLabel("Выберите процесс:"))
         search_layout = QHBoxLayout()
@@ -72,7 +85,7 @@ class OverlayApp(QWidget):
         main_layout.addWidget(self.process_group)
 
         # Position and size group
-        self.position_group = QGroupBox("Позиция и размер")  # Make it an instance variable
+        self.position_group = QGroupBox("Позиция и размер")
         position_size_group_layout = QGridLayout()
         position_size_group_layout.addWidget(QLabel("X:"), 0, 0)
         position_size_group_layout.addWidget(self.x_spin, 0, 1)
@@ -86,10 +99,12 @@ class OverlayApp(QWidget):
         main_layout.addWidget(self.position_group)
 
         # Actions group
-        self.button_group = QGroupBox("Действия")  # Make it an instance variable
+        self.button_group = QGroupBox("Действия")
         button_layout = QVBoxLayout()
         button_layout.addWidget(self.overlay_button)
         button_layout.addWidget(self.remove_overlay_button)
+        button_layout.addWidget(self.toggle_theme_button)  # Add the toggle theme button
+        button_layout.addWidget(self.progress_bar)
         self.button_group.setLayout(button_layout)
         main_layout.addWidget(self.button_group)
 
@@ -99,111 +114,243 @@ class OverlayApp(QWidget):
         self.apply_styles()
 
         self.update_process_list()
-        self.process_list_combo.currentIndexChanged.connect(self.save_selected_process)
+
+        # System Tray Icon
+        self.tray_icon = QSystemTrayIcon(self)  #  QIcon('icon.png')
+        self.tray_icon.setIcon(self.get_app_icon())  # Use a placeholder get_app_icon function or load a real icon.
+        self.tray_icon.setToolTip("PhantomWindow")
+        tray_menu = QMenu()
+        exit_action = QAction("Выход", self)
+        exit_action.triggered.connect(self.close)
+        tray_menu.addAction(exit_action)
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.show()
+
+        # Hotkeys
+        self.shortcut_overlay = QShortcut(Qt.CTRL + Qt.Key_O, self)
+        self.shortcut_overlay.activated.connect(self.overlay_selected_window)
+
+        self.shortcut_remove_overlay = QShortcut(Qt.CTRL + Qt.Key_R, self)
+        self.shortcut_remove_overlay.activated.connect(self.remove_overlay)
+
+        # Timer to refresh process list
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_process_list)
+        self.timer.start(5000)  # Refresh every 5 seconds
+
+    def get_app_icon(self):
+        """Placeholder function to get application icon"""
+        # Replace this with your actual method to get the application icon.
+        return QIcon()
 
     def apply_styles(self):
         """Apply consistent styling to widgets."""
-        app_style = """
-            QWidget {
-                background-color: #F5F5F5; /* Lighter background */
-                color: #333;
-                font-family: Segoe UI, Arial, sans-serif; /* Modern font */
-                font-size: 10pt;
-            }
-            QLabel {
-                color: #555; /* Slightly lighter label text */
-            }
-        """
+        if self.dark_theme:
+            app_style = """
+                QWidget {
+                    background-color: #2E2E2E;
+                    color: #FFFFFF;
+                    font-family: Segoe UI, Arial, sans-serif;
+                    font-size: 10pt;
+                }
+                QLabel {
+                    color: #BBBBBB;
+                }
+            """
 
-        groupbox_style = """
-            QGroupBox {
-                border: 1px solid #8F8F91; /* Subtler border */
-                border-radius: 4px;
-                margin-top: 0.5em;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 7px;
-                padding: 0 5px 0 5px;
-                color: #555; /* Title text color */
-            }
-        """
+            groupbox_style = """
+                QGroupBox {
+                    border: 1px solid #555555;
+                    border-radius: 4px;
+                    margin-top: 0.5em;
+                    color: #FFFFFF;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 7px;
+                    padding: 0 5px 0 5px;
+                    color: #FFFFFF;
+                }
+            """
 
-        lineedit_style = """
-            QLineEdit, QSpinBox {
-                border: 1px solid #A0A0A0; /* Light border */
-                border-radius: 3px;
-                padding: 4px;
-                background-color: #FFFFFF;
-                color: #333;
-            }
-            QLineEdit:focus, QSpinBox:focus {
-                border: 1px solid #64B5F6; /* Focused border color */
-            }
-        """
+            lineedit_style = """
+                QLineEdit, QSpinBox {
+                    border: 1px solid #777777;
+                    border-radius: 3px;
+                    padding: 4px;
+                    background-color: #333333;
+                    color: #FFFFFF;
+                }
+                QLineEdit:focus, QSpinBox:focus {
+                    border: 1px solid #64B5F6;
+                }
+            """
 
-        combobox_style = """
-            QComboBox {
-                border: 1px solid #A0A0A0;
-                border-radius: 3px;
-                padding: 4px;
-                background-color: #FFFFFF;
-                color: #333;
-            }
-            QComboBox:hover {
-                background-color: #E0E0E0;
-            }
-            QComboBox::drop-down {
-                border: 0px;
-            }
-            QComboBox::down-arrow {
-                image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAh0lEQVQ4T2NkoBAwUqifgbsDqCcMDcQ4gFgDyE5gaCmEAQVhQA0YkE5hE2gGiF8g4gEQTwPxAdQ7kMwJ0AcgjEcQeQPyLCAgAAKMA0AKQjQdgAAAABJRU5ErkJggg==);
-                width: 16px;
-                height: 16px;
-            }
-        """
+            combobox_style = """
+                QComboBox {
+                    border: 1px solid #777777;
+                    border-radius: 3px;
+                    padding: 4px;
+                    background-color: #333333;
+                    color: #FFFFFF;
+                }
+                QComboBox:hover {
+                    background-color: #555555;
+                }
+                QComboBox::drop-down {
+                    border: 0px;
+                }
+                QComboBox::down-arrow {
+                    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAh0lEQVQ4T2NkoBAwUqifgbsDqCcMDcQ4gFgDyE5gaCmEAQVhQA0YkE5hE2gGiF8g4gEQTwPxAdQ7kMwJ0AcgjEcQeQPyLCAgAAKMA0AKQjQdgAAAABJRU5ErkJggg==);
+                    width: 16px;
+                    height: 16px;
+                }
+            """
 
-        button_style = """
-            QPushButton {
-                background-color: #4CAF50;
-                border: none;
-                color: white;
-                padding: 8px 16px;
-                text-align: center;
-                text-decoration: none;
-                display: inline-block;
-                font-size: 10pt;
-                margin: 4px 2px;
-                cursor: pointer;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #388E3C;
-            }
-            QPushButton:disabled {
-                background-color: #A0A0A0;
-                color: #606060;
-            }
-        """
+            button_style = """
+                QPushButton {
+                    background-color: #3C3C3C;
+                    border: none;
+                    color: white;
+                    padding: 8px 16px;
+                    text-align: center;
+                    text-decoration: none;
+                    display: inline-block;
+                    font-size: 10pt;
+                    margin: 4px 2px;
+                    cursor: pointer;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #555555;
+                }
+                QPushButton:disabled {
+                    background-color: #555555;
+                    color: #777777;
+                }
+            """
 
-        remove_button_style = """
-            QPushButton {
-                background-color: #F44336;
-                border: none;
-                color: white;
-                padding: 8px 16px;
-                text-align: center;
-                text-decoration: none;
-                display: inline-block;
-                font-size: 10pt;
-                margin: 4px 2px;
-                cursor: pointer;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #D32F2F;
-            }
-        """
+            remove_button_style = """
+                QPushButton {
+                    background-color: #D32F2F;
+                    border: none;
+                    color: white;
+                    padding: 8px 16px;
+                    text-align: center;
+                    text-decoration: none;
+                    display: inline-block;
+                    font-size: 10pt;
+                    margin: 4px 2px;
+                    cursor: pointer;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #C62828;
+                }
+            """
+
+        else:
+            app_style = """
+                QWidget {
+                    background-color: #F5F5F5;
+                    color: #333;
+                    font-family: Segoe UI, Arial, sans-serif;
+                    font-size: 10pt;
+                }
+                QLabel {
+                    color: #555;
+                }
+            """
+
+            groupbox_style = """
+                QGroupBox {
+                    border: 1px solid #8F8F91;
+                    border-radius: 4px;
+                    margin-top: 0.5em;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 7px;
+                    padding: 0 5px 0 5px;
+                    color: #555;
+                }
+            """
+
+            lineedit_style = """
+                QLineEdit, QSpinBox {
+                    border: 1px solid #A0A0A0;
+                    border-radius: 3px;
+                    padding: 4px;
+                    background-color: #FFFFFF;
+                    color: #333;
+                }
+                QLineEdit:focus, QSpinBox:focus {
+                    border: 1px solid #64B5F6;
+                }
+            """
+
+            combobox_style = """
+                QComboBox {
+                    border: 1px solid #A0A0A0;
+                    border-radius: 3px;
+                    padding: 4px;
+                    background-color: #FFFFFF;
+                    color: #333;
+                }
+                QComboBox:hover {
+                    background-color: #E0E0E0;
+                }
+                QComboBox::drop-down {
+                    border: 0px;
+                }
+                QComboBox::down-arrow {
+                    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAh0lEQVQ4T2NkoBAwUqifgbsDqCcMDcQ4gFgDyE5gaCmEAQVhQA0YkE5hE2gGiF8g4gEQTwPxAdQ7kMwJ0AcgjEcQeQPyLCAgAAKMA0AKQjQdgAAAABJRU5ErkJggg==);
+                    width: 16px;
+                    height: 16px;
+                }
+            """
+
+            button_style = """
+                QPushButton {
+                    background-color: #4CAF50;
+                    border: none;
+                    color: white;
+                    padding: 8px 16px;
+                    text-align: center;
+                    text-decoration: none;
+                    display: inline-block;
+                    font-size: 10pt;
+                    margin: 4px 2px;
+                    cursor: pointer;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #388E3C;
+                }
+                QPushButton:disabled {
+                    background-color: #A0A0A0;
+                    color: #606060;
+                }
+            """
+
+            remove_button_style = """
+                QPushButton {
+                    background-color: #F44336;
+                    border: none;
+                    color: white;
+                    padding: 8px 16px;
+                    text-align: center;
+                    text-decoration: none;
+                    display: inline-block;
+                    font-size: 10pt;
+                    margin: 4px 2px;
+                    cursor: pointer;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #D32F2F;
+                }
+            """
 
         self.setStyleSheet(app_style)
         self.search_edit.setStyleSheet(lineedit_style)
@@ -214,6 +361,7 @@ class OverlayApp(QWidget):
         self.height_spin.setStyleSheet(lineedit_style)
         self.overlay_button.setStyleSheet(button_style)
         self.remove_overlay_button.setStyleSheet(remove_button_style)
+        self.toggle_theme_button.setStyleSheet(button_style) # Use the same button style or create a different one.
         self.process_group.setStyleSheet(groupbox_style)
         self.position_group.setStyleSheet(groupbox_style)
         self.button_group.setStyleSheet(groupbox_style)
@@ -333,6 +481,8 @@ class OverlayApp(QWidget):
         return QIcon()
 
     def overlay_selected_window(self):
+        self.start_progress() # Starts progress bar
+
         self.target_pid = self.process_list_combo.currentData()
         self.hwnd = self.get_main_window_handle(self.target_pid)
 
@@ -347,7 +497,12 @@ class OverlayApp(QWidget):
         else:
             QMessageBox.critical(self, "Ошибка", "Не удалось найти дескриптор окна.")
 
+        self.stop_progress() # Stops progress bar
+
+
     def remove_overlay(self):
+        self.start_progress() # Starts progress bar
+
         if self.hwnd:
             try:
                 win32gui.SetWindowPos(self.hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0,
@@ -359,6 +514,8 @@ class OverlayApp(QWidget):
                 self.overlay_button.setEnabled(True)
                 self.remove_overlay_button.setEnabled(False)
                 self.hwnd = None
+
+        self.stop_progress() # Stops progress bar
 
     def get_main_window_handle(self, pid):
         """
@@ -414,6 +571,19 @@ class OverlayApp(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка",
                                  f"Ошибка при изменении размера/перемещении окна: {e}")
+
+    def toggle_theme(self):
+        """Toggle the dark theme"""
+        self.dark_theme = not self.dark_theme
+        self.apply_styles()
+
+    def start_progress(self):
+        """Show progress bar"""
+        self.progress_bar.setVisible(True)
+
+    def stop_progress(self):
+        """Hide progress bar"""
+        self.progress_bar.setVisible(False)
 
 if __name__ == '__main__':
     QLocale.setDefault(QLocale("ru_RU"))
