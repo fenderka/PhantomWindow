@@ -1,4 +1,4 @@
-![4cb2096bdceb11ef8efb664ee553938b_2](https://github.com/user-attachments/assets/e3cd5ceb-670c-4b97-a334-814da2b2fcee)# PhantomWindow - Приложение для наложения окон
+# PhantomWindow - Приложение для наложения окон
 
 ## Описание
 
