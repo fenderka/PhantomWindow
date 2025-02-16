@@ -1,4 +1,4 @@
-# PhantomWindow - Приложение для наложения окон
+![4cb2096bdceb11ef8efb664ee553938b_2](https://github.com/user-attachments/assets/e3cd5ceb-670c-4b97-a334-814da2b2fcee)# PhantomWindow - Приложение для наложения окон
 
 ## Описание
 
@@ -18,3 +18,6 @@ PhantomWindow - это приложение, написанное на Python с
 
 1. Скачайте файл PhantomWindow.exe
 2. Запустите и приложение работает
+
+![image](https://github.com/user-attachments/assets/c35425ac-13bf-4d13-8d6c-7dea033c0dbb)
+![image](https://github.com/user-attachments/assets/0742300e-ac2f-41c7-abc5-1728a9542e31)
